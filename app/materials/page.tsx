@@ -27,10 +27,11 @@ import { supabase } from "@/lib/supabase";
 // - created_at: Son aktiviteleri sıralarken ihtiyaç duyabileceğimiz tarih bilgisi
 type Material = {
   id: string;
-  file_name: string;
-  type: string;
-  status: string;
-  created_at: string;
+  file_name: string; // Orijinal dosya adı (örn: Ağustos_Reels_V1.mp4)
+  file_url?: string; // Supabase Storage üzerinde oluşturulan herkese açık dosya linki
+  type: string; // Materyal türü (Video, Tasarım, Metin vb.)
+  status: string; // Onay durumu (Onay Bekliyor, Onaylandı, Revize İstendi)
+  created_at: string; // Oluşturulma tarihi
 };
 
 // Supabase üzerindeki "projects" tablosundaki kayıtların tipini tanımlıyoruz.
@@ -78,8 +79,9 @@ export default function MaterialsPage() {
   // Yeni materyal ekleme formunda seçili olan projenin id bilgisini tutuyoruz.
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
 
-  // Yeni materyal ekleme formunda girilen dosya adını tutuyoruz.
-  const [newFileName, setNewFileName] = useState<string>("");
+  // Yeni materyal ekleme formunda seçilen gerçek dosya bilgisini (File nesnesi) tutuyoruz.
+  // Bu dosyayı Supabase Storage'a yükleyeceğiz.
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   // Yeni materyal ekleme formunda seçilen materyal türünü tutuyoruz.
   // Varsayılan olarak boş bırakıyoruz; kullanıcı seçince güncellenecek.
@@ -247,10 +249,10 @@ export default function MaterialsPage() {
   // Bu fonksiyon, formdaki "Sisteme Yükle" butonuna basıldığında çalışır.
   // Formdan aldığı değerlerle Supabase'teki "materials" tablosuna yeni bir kayıt ekler.
   const handleCreateMaterial = async () => {
-    // Önce basit bir doğrulama yapıyoruz: Tüm alanlar doldurulmuş mu?
-    if (!selectedProjectId || !newFileName || !newMaterialType) {
+    // Önce basit bir doğrulama yapıyoruz: Tüm alanlar doldurulmuş mu ve dosya seçilmiş mi?
+    if (!selectedProjectId || !selectedFile || !newMaterialType) {
       alert(
-        "Lütfen bir proje seçin, dosya adını yazın ve materyal türünü belirleyin."
+        "Lütfen bir proje seçin, bir dosya yükleyin ve materyal türünü belirleyin."
       );
       return;
     }
@@ -259,35 +261,64 @@ export default function MaterialsPage() {
     setIsCreatingMaterial(true);
 
     try {
-      // Supabase üzerindeki "materials" tablosuna yeni bir satır ekliyoruz.
-      // Burada:
-      // - project_id: Seçilen projenin id değeri
-      // - file_name: Formdan girilen dosya adı
-      // - type: Formdan seçilen materyal türü
-      // - status: Varsayılan olarak "Onay Bekliyor" durumu ile başlatıyoruz.
-      const { error } = await supabase.from("materials").insert({
-        project_id: selectedProjectId,
-        file_name: newFileName,
-        type: newMaterialType,
-        status: "Onay Bekliyor",
-      });
+      // 1) Supabase Storage'a dosyayı yüklemek için benzersiz bir yol (path) oluşturuyoruz.
+      // Çakışmayı önlemek adına dosya adının başına Date.now() ile alınan zaman damgasını ekliyoruz.
+      const originalFileName = selectedFile.name;
+      const uniquePath = `${Date.now()}_${originalFileName}`;
 
-      // Eğer Supabase bir hata döndürdüyse, kullanıcıya basit bir uyarı gösteriyoruz
-      // ve hatayı konsola yazıyoruz.
-      if (error) {
+      // 2) Supabase Storage üzerinde "materials" isimli bucket'a dosya yükleme isteği gönderiyoruz.
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from("materials")
+        .upload(uniquePath, selectedFile, {
+          // İçerik tipini (MIME type) dosyanın tipinden otomatik alıyoruz.
+          contentType: selectedFile.type || "application/octet-stream",
+        });
+
+      // Eğer upload sırasında hata oluşursa kullanıcıyı bilgilendiriyoruz.
+      if (uploadError || !uploadData) {
         console.error(
-          "Yeni materyal eklenirken bir hata oluştu:",
-          error.message
+          "Dosya Supabase Storage'a yüklenirken bir hata oluştu:",
+          uploadError?.message
         );
         alert(
-          "Materyal eklenirken bir hata oluştu. Lütfen tekrar deneyin veya sistem yöneticinize haber verin."
+          "Dosya yüklenirken bir hata oluştu. Lütfen tekrar deneyin veya sistem yöneticinize haber verin."
         );
         return;
       }
 
-      // Ekleme işlemi başarılıysa, form alanlarını temizliyoruz.
+      // 3) Dosya başarıyla yüklendiyse, Supabase Storage üzerinden herkese açık erişim linkini alıyoruz.
+      const {
+        data: publicUrlData,
+      } = supabase.storage.from("materials").getPublicUrl(uploadData.path);
+
+      const fileUrl = publicUrlData.publicUrl;
+
+      // 4) Artık "materials" tablosuna yeni bir satır ekleyebiliriz.
+      // - file_name: Orijinal dosya adı (kullanıcıya okunabilir göstermek için)
+      // - file_url: Supabase Storage tarafından sağlanan herkese açık dosya bağlantısı
+      const { error: insertError } = await supabase.from("materials").insert({
+        project_id: selectedProjectId,
+        file_name: originalFileName,
+        file_url: fileUrl,
+        type: newMaterialType,
+        status: "Onay Bekliyor",
+      });
+
+      // Eğer Supabase insert aşamasında bir hata döndürürse kullanıcıyı bilgilendiriyoruz.
+      if (insertError) {
+        console.error(
+          "Yeni materyal veritabanına eklenirken bir hata oluştu:",
+          insertError.message
+        );
+        alert(
+          "Materyal veritabanına eklenirken bir hata oluştu. Lütfen tekrar deneyin veya sistem yöneticinize haber verin."
+        );
+        return;
+      }
+
+      // Her şey yolunda gittiyse, form alanlarını temizliyoruz.
       setSelectedProjectId("");
-      setNewFileName("");
+      setSelectedFile(null);
       setNewMaterialType("");
 
       // Ardından materyal listesini yeniliyoruz ki yeni eklenen kayıt hemen ekranda görünsün.
@@ -593,19 +624,34 @@ export default function MaterialsPage() {
                     {/* Dosya Adı */}
                     <div>
                       <label
-                        htmlFor="file_name"
+                        htmlFor="file_input"
                         className="block text-xs font-medium text-slate-700"
                       >
-                        Dosya Adı
+                        Dosya Yükle
                       </label>
+                      {/* type="file" input'u ile kullanıcının bilgisayarından dosya seçmesini sağlıyoruz. */}
                       <input
-                        id="file_name"
-                        type="text"
-                        value={newFileName}
-                        onChange={(e) => setNewFileName(e.target.value)}
-                        placeholder="Örn: Eylül_Kampanyasi_V2.mp4"
-                        className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-900 placeholder-slate-400 outline-none focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100"
+                        id="file_input"
+                        type="file"
+                        // Sadece bir dosya seçilmesine izin veriyoruz (multiple kullanmıyoruz).
+                        onChange={(e) =>
+                          setSelectedFile(
+                            e.target.files && e.target.files[0]
+                              ? e.target.files[0]
+                              : null
+                          )
+                        }
+                        className="mt-1 block w-full cursor-pointer rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-sky-600 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-sky-700"
                       />
+                      {/* Seçilen dosyanın adını küçük bir bilgi satırı olarak gösterebiliriz. */}
+                      {selectedFile && (
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          Seçilen dosya:{" "}
+                          <span className="font-medium">
+                            {selectedFile.name}
+                          </span>
+                        </p>
+                      )}
                     </div>
 
                     {/* Materyal Türü */}
@@ -714,6 +760,20 @@ export default function MaterialsPage() {
                                 {material.status}
                               </span>
                             </div>
+
+                          {/* Eğer materyalin file_url bilgisi varsa, dosyayı gör / indir linki gösteriyoruz. */}
+                          {material.file_url && (
+                            <div className="mt-3">
+                              <a
+                                href={material.file_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center text-[11px] font-medium text-sky-700 hover:text-sky-800"
+                              >
+                                Dosyayı Gör
+                              </a>
+                            </div>
+                          )}
                           </div>
 
                           {/* Alt kısım: Onayla / Revize İste butonları */}
