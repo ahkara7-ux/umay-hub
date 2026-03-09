@@ -72,6 +72,12 @@ export default function MaterialsPage() {
   // false: Menü kapalı, true: Menü açık (ekranın solundan kayan drawer olarak görünecek).
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
+  // Geçici rol kontrolü için basit bir admin bayrağı oluşturuyoruz.
+  // Burada sadece belirli bir e-posta adresine (örneğin ajans yetkilisinin maili)
+  // sahip kullanıcıları "admin" olarak kabul ediyoruz.
+  // Diğer tüm kullanıcılar (müşteriler) bu koşula girmeyeceği için bazı alanları göremeyecek.
+  const isAdmin = userEmail === "testmail@gmail.com";
+
   // Proje listesini (id ve name) saklamak için bir state tanımlıyoruz.
   // Bu veriyi Supabase'teki "projects" tablosundan çekeceğiz.
   const [projects, setProjects] = useState<Project[]>([]);
@@ -584,113 +590,121 @@ export default function MaterialsPage() {
               </section>
 
               {/* Yeni Materyal Ekle formu */}
-              <section>
-                <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-100">
-                  <div className="mb-4">
-                    <h3 className="text-sm font-semibold text-slate-900">
-                      Yeni Materyal Ekle
-                    </h3>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Bir projeye bağlı yeni bir materyali sisteme ekleyin.
-                    </p>
-                  </div>
+              {/* 
+                - Bu formu sadece belirlediğimiz admin e-posta adresine sahip kullanıcılar görebilsin istiyoruz.
+                - isAdmin false olduğunda (müşteri rolü) bu kart tamamen gizlenecek.
+              */}
+              {isAdmin && (
+                <section>
+                  <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-100">
+                    <div className="mb-4">
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        Yeni Materyal Ekle
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Bir projeye bağlı yeni bir materyali sisteme ekleyin.
+                      </p>
+                    </div>
 
-                  <div className="space-y-4">
-                    {/* Proje Seçimi */}
-                    <div>
-                      <label
-                        htmlFor="project"
-                        className="block text-xs font-medium text-slate-700"
-                      >
-                        Proje Seçin
-                      </label>
-                      <select
-                        id="project"
-                        value={selectedProjectId}
-                        onChange={(e) => setSelectedProjectId(e.target.value)}
-                        className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-900 outline-none focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100"
-                      >
-                        <option value="">
-                          Bir proje seçin (zorunlu)
-                        </option>
-                        {projects.map((project) => (
-                          <option key={project.id} value={project.id}>
-                            {project.name}
+                    <div className="space-y-4">
+                      {/* Proje Seçimi */}
+                      <div>
+                        <label
+                          htmlFor="project"
+                          className="block text-xs font-medium text-slate-700"
+                        >
+                          Proje Seçin
+                        </label>
+                        <select
+                          id="project"
+                          value={selectedProjectId}
+                          onChange={(e) =>
+                            setSelectedProjectId(e.target.value)
+                          }
+                          className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-900 outline-none focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100"
+                        >
+                          <option value="">
+                            Bir proje seçin (zorunlu)
                           </option>
-                        ))}
-                      </select>
+                          {projects.map((project) => (
+                            <option key={project.id} value={project.id}>
+                              {project.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Dosya Yükleme */}
+                      <div>
+                        <label
+                          htmlFor="file_input"
+                          className="block text-xs font-medium text-slate-700"
+                        >
+                          Dosya Yükle
+                        </label>
+                        {/* type="file" input'u ile kullanıcının bilgisayarından dosya seçmesini sağlıyoruz. */}
+                        <input
+                          id="file_input"
+                          type="file"
+                          // Sadece bir dosya seçilmesine izin veriyoruz (multiple kullanmıyoruz).
+                          onChange={(e) =>
+                            setSelectedFile(
+                              e.target.files && e.target.files[0]
+                                ? e.target.files[0]
+                                : null
+                            )
+                          }
+                          className="mt-1 block w-full cursor-pointer rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-sky-600 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-sky-700"
+                        />
+                        {/* Seçilen dosyanın adını küçük bir bilgi satırı olarak gösterebiliriz. */}
+                        {selectedFile && (
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            Seçilen dosya:{" "}
+                            <span className="font-medium">
+                              {selectedFile.name}
+                            </span>
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Materyal Türü */}
+                      <div>
+                        <label
+                          htmlFor="material_type"
+                          className="block text-xs font-medium text-slate-700"
+                        >
+                          Materyal Türü
+                        </label>
+                        <select
+                          id="material_type"
+                          value={newMaterialType}
+                          onChange={(e) => setNewMaterialType(e.target.value)}
+                          className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-900 outline-none focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100"
+                        >
+                          <option value="">
+                            Bir materyal türü seçin (zorunlu)
+                          </option>
+                          <option value="Video">Video</option>
+                          <option value="Tasarım">Tasarım</option>
+                          <option value="Metin">Metin</option>
+                        </select>
+                      </div>
                     </div>
 
-                    {/* Dosya Adı */}
-                    <div>
-                      <label
-                        htmlFor="file_input"
-                        className="block text-xs font-medium text-slate-700"
+                    {/* Form altı buton alanı */}
+                    <div className="mt-5 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleCreateMaterial}
+                        disabled={isCreatingMaterial}
+                        className="inline-flex items-center rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-sky-400"
                       >
-                        Dosya Yükle
-                      </label>
-                      {/* type="file" input'u ile kullanıcının bilgisayarından dosya seçmesini sağlıyoruz. */}
-                      <input
-                        id="file_input"
-                        type="file"
-                        // Sadece bir dosya seçilmesine izin veriyoruz (multiple kullanmıyoruz).
-                        onChange={(e) =>
-                          setSelectedFile(
-                            e.target.files && e.target.files[0]
-                              ? e.target.files[0]
-                              : null
-                          )
-                        }
-                        className="mt-1 block w-full cursor-pointer rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-sky-600 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-sky-700"
-                      />
-                      {/* Seçilen dosyanın adını küçük bir bilgi satırı olarak gösterebiliriz. */}
-                      {selectedFile && (
-                        <p className="mt-1 text-[11px] text-slate-500">
-                          Seçilen dosya:{" "}
-                          <span className="font-medium">
-                            {selectedFile.name}
-                          </span>
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Materyal Türü */}
-                    <div>
-                      <label
-                        htmlFor="material_type"
-                        className="block text-xs font-medium text-slate-700"
-                      >
-                        Materyal Türü
-                      </label>
-                      <select
-                        id="material_type"
-                        value={newMaterialType}
-                        onChange={(e) => setNewMaterialType(e.target.value)}
-                        className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-900 outline-none focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100"
-                      >
-                        <option value="">
-                          Bir materyal türü seçin (zorunlu)
-                        </option>
-                        <option value="Video">Video</option>
-                        <option value="Tasarım">Tasarım</option>
-                        <option value="Metin">Metin</option>
-                      </select>
+                        {isCreatingMaterial ? "Yükleniyor..." : "Sisteme Yükle"}
+                      </button>
                     </div>
                   </div>
-
-                  {/* Form altı buton alanı */}
-                  <div className="mt-5 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={handleCreateMaterial}
-                      disabled={isCreatingMaterial}
-                      className="inline-flex items-center rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-sky-400"
-                    >
-                      {isCreatingMaterial ? "Yükleniyor..." : "Sisteme Yükle"}
-                    </button>
-                  </div>
-                </div>
-              </section>
+                </section>
+              )}
 
               {/* Materyal kartları listesi */}
               <section>
