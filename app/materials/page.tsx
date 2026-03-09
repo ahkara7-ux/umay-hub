@@ -67,6 +67,10 @@ export default function MaterialsPage() {
     null
   );
 
+  // Mobil cihazlarda sol menünün (sidebar) açılıp kapanma durumunu yönetmek için bir state tanımlıyoruz.
+  // false: Menü kapalı, true: Menü açık (ekranın solundan kayan drawer olarak görünecek).
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
   // Proje listesini (id ve name) saklamak için bir state tanımlıyoruz.
   // Bu veriyi Supabase'teki "projects" tablosundan çekeceğiz.
   const [projects, setProjects] = useState<Project[]>([]);
@@ -370,9 +374,18 @@ export default function MaterialsPage() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       {/* Ana layout: Sol tarafta sabit sidebar, sağ tarafta içerik alanı */}
-      <div className="mx-auto flex min-h-screen max-w-7xl">
-        {/* Sidebar (Sol Menü) - Ana sayfadaki tasarımın aynısını kullanıyoruz */}
-        <aside className="hidden w-64 flex-shrink-0 border-r border-slate-200 bg-white/80 px-6 py-8 shadow-sm lg:block">
+      <div className="relative mx-auto flex min-h-screen max-w-7xl">
+        {/* Sidebar (Sol Menü) - Ana sayfadaki tasarımın mobil uyumlu versiyonu */}
+        {/* 
+          - Mobilde: fixed + translate-x ile ekranın solundan kayan bir drawer olarak davranır.
+          - Masaüstünde (lg ve üstü): static konumda, her zamanki sabit sol menü görünümünü korur.
+        */}
+        <aside
+          className={`fixed inset-y-0 left-0 z-40 w-64 flex-shrink-0 border-r border-slate-200 bg-white/90 px-6 py-8 shadow-lg transition-transform duration-200 ease-out
+          ${
+            isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+          } lg:static lg:inset-auto lg:translate-x-0 lg:bg-white/80 lg:shadow-sm`}
+        >
           <div className="mb-10">
             <div className="flex items-center gap-2">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-600 text-sm font-semibold text-white shadow-sm">
@@ -392,6 +405,7 @@ export default function MaterialsPage() {
           <nav className="space-y-1 text-sm font-medium">
             <a
               href="/"
+              onClick={() => setIsSidebarOpen(false)}
               className="flex items-center gap-3 rounded-lg px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
             >
               <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 text-xs font-semibold text-slate-500">
@@ -401,6 +415,7 @@ export default function MaterialsPage() {
             </a>
             <a
               href="#"
+              onClick={() => setIsSidebarOpen(false)}
               className="flex items-center gap-3 rounded-lg px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
             >
               <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 text-xs font-semibold text-slate-500">
@@ -410,6 +425,7 @@ export default function MaterialsPage() {
             </a>
             <a
               href="#"
+              onClick={() => setIsSidebarOpen(false)}
               className="flex items-center gap-3 rounded-lg px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
             >
               <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 text-xs font-semibold text-slate-500">
@@ -419,6 +435,7 @@ export default function MaterialsPage() {
             </a>
             <a
               href="/materials"
+              onClick={() => setIsSidebarOpen(false)}
               className="flex items-center gap-3 rounded-lg bg-sky-50 px-3 py-2 text-sky-700 shadow-sm ring-1 ring-sky-100"
             >
               <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-sky-100 text-xs font-semibold text-sky-700">
@@ -428,6 +445,7 @@ export default function MaterialsPage() {
             </a>
             <a
               href="#"
+              onClick={() => setIsSidebarOpen(false)}
               className="flex items-center gap-3 rounded-lg px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
             >
               <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 text-xs font-semibold text-slate-500">
@@ -437,6 +455,7 @@ export default function MaterialsPage() {
             </a>
             <a
               href="#"
+              onClick={() => setIsSidebarOpen(false)}
               className="flex items-center gap-3 rounded-lg px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
             >
               <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 text-xs font-semibold text-slate-500">
@@ -447,12 +466,40 @@ export default function MaterialsPage() {
           </nav>
         </aside>
 
+        {/* Mobilde sidebar açıkken arka planda görünen yarı saydam karartma (overlay) alanı */}
+        {/* 
+          - Sadece küçük ekranlarda (lg altı) ve sidebar açıksa gösterilir.
+          - Kullanıcı bu karanlık alana tıkladığında menüyü kapatıyoruz.
+        */}
+        {isSidebarOpen && (
+          <div
+            className="fixed inset-0 z-30 bg-slate-900/40 lg:hidden"
+            onClick={() => setIsSidebarOpen(false)}
+          />
+        )}
+
         {/* Sağ ana bölüm */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Header - Ana sayfadaki header'ın aynısını kullanıyoruz, sadece başlığı değiştirdik */}
           <header className="flex items-center justify-between border-b border-slate-200 bg-white/70 px-4 py-4 backdrop-blur-sm sm:px-6 lg:px-8">
             <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-600 text-sm font-semibold text-white shadow-sm lg:hidden">
+              {/* Mobilde görünen hamburger menü butonu */}
+              <button
+                type="button"
+                onClick={() => setIsSidebarOpen(true)}
+                className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-700 shadow-sm lg:hidden"
+                aria-label="Menüyü aç"
+              >
+                {/* Üç yatay çizgiden oluşan basit hamburger ikonu */}
+                <span className="space-y-1">
+                  <span className="block h-0.5 w-4 rounded bg-slate-700" />
+                  <span className="block h-0.5 w-4 rounded bg-slate-700" />
+                  <span className="block h-0.5 w-4 rounded bg-slate-700" />
+                </span>
+              </button>
+
+              {/* Logo / başlık alanı (sadece masaüstünde gösteriyoruz) */}
+              <div className="hidden h-9 w-9 items-center justify-center rounded-xl bg-sky-600 text-sm font-semibold text-white shadow-sm lg:flex">
                 U
               </div>
               <div>
