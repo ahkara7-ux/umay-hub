@@ -14,6 +14,41 @@ import { useRouter } from "next/navigation";
 // Supabase istemcisini (client) daha önce oluşturduğumuz lib/supabase.ts dosyasından alıyoruz.
 import { supabase } from "@/lib/supabase";
 
+// Merkezi Sidebar bileşenimizi içe aktarıyoruz.
+// Böylece tüm sayfalarda aynı menüyü (Link + active state + RBAC) kullanacağız.
+import { Sidebar } from "@/components/Sidebar";
+
+// Recharts kütüphanesinden LineChart bileşenlerini içe aktarıyoruz.
+// Bu sayede son 7 günün harcama trendini basit bir çizgi grafik olarak göstereceğiz.
+// NOT: Bu grafik şu anda sahte (mock) verilerle çalışıyor, ileride gerçek Meta / Google verileri eklenecek.
+import {
+  LineChart,
+  Line,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+
+// Supabase üzerindeki "integrations" tablosundaki kayıtların tipini TypeScript ile tanımlıyoruz.
+// Bu tablo, ajansın hangi platformlarla (meta, google_ads, ga4) entegrasyon kurduğunu simüle eder.
+type Integration = {
+  id: string;
+  agency_id: string | null;
+  platform: "meta" | "google_ads" | "ga4";
+  is_connected: boolean;
+  created_at: string;
+};
+
+// Dashboard üzerinde rol ve entegrasyon kontrolü için minimum profil bilgisi tipini tanımlıyoruz.
+type Profile = {
+  id: string;
+  email: string | null;
+  role: string | null;
+  agency_id: string | null;
+};
+
 // Ana dashboard bileşenini tanımlıyoruz.
 // Varsayılan export olduğu için bu bileşen "/" (ana sayfa) rotasında gösterilecektir.
 export default function Home() {
@@ -35,21 +70,16 @@ export default function Home() {
   // false: Menü kapalı, true: Menü açık (ekranın solundan kayan drawer olarak görünecek).
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // Dashboard içeriğinde göstereceğimiz istatistikler için ayrı state'ler tanımlıyoruz.
-  // projectsCount: Supabase'deki "projects" tablosundan gelen toplam proje sayısı.
-  const [projectsCount, setProjectsCount] = useState<number | null>(null);
+  // Kullanıcının profil bilgisini (RBAC ve entegrasyon kontrolü için) profiles tablosundan çekeceğiz.
+  // Bu rol bilgisini Sidebar bileşenine göndererek müşteri rolünde menüyü daraltacağız.
+  const [currentProfile, setCurrentProfile] = useState<Profile | null>(null);
 
-  // pendingMaterialsCount: Supabase'deki "materials" tablosunda durumu "Onay Bekliyor"
-  // olan materyallerin sayısı.
-  const [pendingMaterialsCount, setPendingMaterialsCount] = useState<
-    number | null
-  >(null);
+  // Rol / profil bilgisini çekerken kısa bir yükleniyor durumu tutuyoruz.
+  const [isProfileLoading, setIsProfileLoading] = useState(true);
 
-  // Son aktiviteler bölümünde göstermek üzere, en son eklenen projenin adı için bir state tanımlıyoruz.
-  // Örn: "Yeni proje eklendi: [Proje Adı]" metnini buradan üreteceğiz.
-  const [latestProjectName, setLatestProjectName] = useState<string | null>(
-    null
-  );
+  // Ajansın herhangi bir entegrasyonu (Meta, Google Ads, GA4) bağlı mı?
+  // Bu bilgiye göre dashboard'ta metrikleri mi yoksa entegrasyon uyarısını mı göstereceğiz.
+  const [hasAnyIntegration, setHasAnyIntegration] = useState(false);
 
   // Yönlendirme işlemleri için router nesnesini alıyoruz.
   const router = useRouter();
@@ -93,85 +123,95 @@ export default function Home() {
     checkSession();
   }, [router]);
 
-  // Oturum kontrolü başarılı olduktan sonra, Supabase'den dashboard için ihtiyaç duyduğumuz
-  // istatistik verilerini çekmek üzere ikinci bir useEffect tanımlıyoruz.
+  // Oturum kontrolü sonrası, giriş yapan kullanıcının rolünü profiles tablosundan alıyoruz.
+  // Böylece Sidebar içindeki RBAC (client rolünde bazı linkleri gizleme) doğru çalışır
+  // ve aynı zamanda agency_id bilgisini alarak entegrasyon durumlarını kontrol edebiliriz.
   useEffect(() => {
-    // Eğer henüz session bilgisi yoksa (örneğin kontrol devam ediyorsa),
-    // verileri çekmeye başlamıyoruz. Böylece gereksiz istek atmamış oluruz.
-    if (!session) return;
+    // Eğer henüz oturum veya e-posta bilgisi yoksa profil sorgusuna başlamıyoruz.
+    if (!session || !userEmail) return;
 
-    // Asenkron veri çekme fonksiyonumuzu tanımlıyoruz.
-    const fetchDashboardData = async () => {
+    const fetchProfileAndIntegrations = async () => {
+      setIsProfileLoading(true);
+
       try {
-        // 1) "projects" tablosundaki toplam proje sayısını çekiyoruz.
-        // Supabase'te sayım (count) almak için select içinde "*" kullanıp
-        // ikinci parametre olarak { count: "exact", head: true } opsiyonlarını veriyoruz.
-        const { count: projectsTotal, error: projectsError } = await supabase
-          .from("projects")
-          .select("*", { count: "exact", head: true });
+        // Önce kullanıcının profilini alıyoruz (role + agency_id)
+        const { data: profileData, error: profileError } = await supabase
+          .from("profiles")
+          .select("id, email, role, agency_id")
+          .eq("email", userEmail)
+          // .maybeSingle(): Kayıt yoksa hata fırlatmak yerine data: null döner.
+          .maybeSingle();
 
-        // Eğer bir hata dönerse, konsola yazıyoruz.
-        if (projectsError) {
+        if (profileError) {
           console.error(
-            "Projeler sayısı alınırken hata oluştu:",
-            projectsError.message
+            "Kullanıcı profili alınırken hata:",
+            profileError.message
           );
-        } else {
-          // Hata yoksa, dönen count değerini state'e yazıyoruz.
-          setProjectsCount(projectsTotal ?? 0);
+          setCurrentProfile(null);
+          setHasAnyIntegration(false);
+          // Profil alınamadıysa kullanıcıyı login sayfasına yönlendiriyoruz.
+          router.push("/login");
+          return;
         }
 
-        // 2) "materials" tablosunda durumu "Onay Bekliyor" olan kayıtların sayısını çekiyoruz.
-        const {
-          count: materialsPendingTotal,
-          error: materialsError,
-        } = await supabase
-          .from("materials")
-          .select("*", { count: "exact", head: true })
-          .eq("status", "Onay Bekliyor");
-
-        if (materialsError) {
+        if (!profileData) {
           console.error(
-            "Bekleyen materyal sayısı alınırken hata oluştu:",
-            materialsError.message
+            "Kullanıcı profili bulunamadı. Lütfen destek ile iletişime geçin."
           );
-        } else {
-          setPendingMaterialsCount(materialsPendingTotal ?? 0);
+          setCurrentProfile(null);
+          setHasAnyIntegration(false);
+          // Profil yoksa login'e yönlendirme veya ayrı bir ekrana atma tercih edilir;
+          // burada /login tercih edildi.
+          router.push("/login");
+          return;
         }
 
-        // 3) "projects" tablosundan en son eklenen projeyi çekiyoruz.
-        // order("created_at", { ascending: false }): En yeni kayıt en üstte olacak şekilde sıralar.
-        // limit(1): Sadece 1 kayıt alırız.
-        const {
-          data: latestProjects,
-          error: latestProjectError,
-        } = await supabase
-          .from("projects")
-          .select("name")
-          .order("created_at", { ascending: false })
-          .limit(1);
+        const profile = profileData as Profile;
+        setCurrentProfile(profile);
+        // Debug amaçlı: mevcut profil bilgisini konsola basıyoruz.
+        // Bu sayede role ve agency_id değerlerinin doğru gelip gelmediğini görebilirsiniz.
+        console.log("Dashboard currentProfile:", profile);
 
-        if (latestProjectError) {
-          console.error(
-            "Son proje bilgisi alınırken hata oluştu:",
-            latestProjectError.message
-          );
-        } else if (latestProjects && latestProjects.length > 0) {
-          // Dönen ilk (ve tek) kaydın adını state'e yazıyoruz.
-          setLatestProjectName(latestProjects[0].name as string);
-        } else {
-          // Eğer hiç proje yoksa, bunu da kullanıcıya bilgi olarak gösterebiliriz.
-          setLatestProjectName(null);
+        // Eğer ajansa ait bir agency_id yoksa entegrasyon aramamıza gerek yok.
+        if (!profile.agency_id) {
+          setHasAnyIntegration(false);
+          return;
         }
-      } catch (error) {
-        // Beklenmeyen bir hata durumunda (örneğin ağ hatası) konsola basit bir log yazıyoruz.
-        console.error("Dashboard verileri alınırken beklenmeyen hata:", error);
+
+        // Ajansa ait entegrasyonları kontrol ediyoruz.
+        // En az bir entegrasyon (meta, google_ads, ga4) bağlı mı?
+        const { data: integrationsData, error: integrationsError } =
+          await supabase
+            .from("integrations")
+            .select("id, platform, is_connected")
+            .eq("agency_id", profile.agency_id)
+            .eq("is_connected", true);
+
+        if (integrationsError) {
+          console.error(
+            "Entegrasyon bilgileri alınırken hata:",
+            integrationsError.message
+          );
+          setHasAnyIntegration(false);
+          return;
+        }
+
+        const rows = (integrationsData as Integration[]) || [];
+        setHasAnyIntegration(rows.length > 0);
+      } catch (err) {
+        console.error(
+          "Kullanıcı profili veya entegrasyonları alınırken beklenmeyen hata:",
+          err
+        );
+        setCurrentProfile(null);
+        setHasAnyIntegration(false);
+      } finally {
+        setIsProfileLoading(false);
       }
     };
 
-    // Tanımladığımız veri çekme fonksiyonunu çağırıyoruz.
-    fetchDashboardData();
-  }, [session]);
+    fetchProfileAndIntegrations();
+  }, [session, userEmail]);
 
   // Kullanıcı "Çıkış Yap" butonuna bastığında çalışacak fonksiyonu tanımlıyoruz.
   const handleLogout = async () => {
@@ -192,7 +232,8 @@ export default function Home() {
 
   // Eğer oturum kontrolü hala devam ediyorsa, basit bir yükleniyor ekranı gösteriyoruz.
   // Böylece kullanıcı, kontrol bitmeden dashboard içeriğini görmüyor.
-  if (isCheckingSession) {
+  // Rol bilgisi de yükleniyorsa, yine kısa bir bekleme ekranı gösteriyoruz.
+  if (isCheckingSession || isProfileLoading || !currentProfile || !currentProfile.role) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-500">
         {/* Basit bir yükleniyor metni; istenirse buraya küçük bir spinner animasyonu eklenebilir */}
@@ -207,109 +248,16 @@ export default function Home() {
     <div className="min-h-screen bg-slate-50 text-slate-900">
       {/* Ana layout */}
       <div className="relative mx-auto flex min-h-screen max-w-7xl">
-        {/* Sidebar (Sol Menü) */}
-        {/* 
-          - Mobilde: fixed + translate-x ile ekranın solundan kayan bir drawer olarak davranır.
-          - Masaüstünde (lg ve üstü): static konumda, her zamanki sabit sol menü görünümünü korur.
-        */}
-        <aside
-          className={`fixed inset-y-0 left-0 z-40 w-64 flex-shrink-0 border-r border-slate-200 bg-white/90 px-6 py-8 shadow-lg transition-transform duration-200 ease-out
-          ${
-            isSidebarOpen ? "translate-x-0" : "-translate-x-full"
-          } lg:static lg:inset-auto lg:translate-x-0 lg:bg-white/80 lg:shadow-sm`}
-        >
-          <div className="mb-10">
-            <div className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-600 text-sm font-semibold text-white shadow-sm">
-                U
-              </div>
-              <div>
-                <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
-                  Ajans Paneli
-                </p>
-                <p className="text-sm font-semibold text-slate-900">
-                  UMAY Hub
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <nav className="space-y-1 text-sm font-medium">
-            <a
-              href="/"
-              // Mobilde menüden bir linke basıldığında drawer'ın kapanması için onClick ile state'i kapatıyoruz.
-              onClick={() => setIsSidebarOpen(false)}
-              className="flex items-center gap-3 rounded-lg bg-sky-50 px-3 py-2 text-sky-700 shadow-sm ring-1 ring-sky-100"
-            >
-              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-sky-100 text-xs font-semibold text-sky-700">
-                ●
-              </span>
-              <span>Dashboard</span>
-            </a>
-            <a
-              href="#"
-              onClick={() => setIsSidebarOpen(false)}
-              className="flex items-center gap-3 rounded-lg px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-            >
-              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 text-xs font-semibold text-slate-500">
-                PR
-              </span>
-              <span>Projeler</span>
-            </a>
-            <a
-              href="#"
-              onClick={() => setIsSidebarOpen(false)}
-              className="flex items-center gap-3 rounded-lg px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-            >
-              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 text-xs font-semibold text-slate-500">
-                GÖ
-              </span>
-              <span>Görevler</span>
-            </a>
-            <a
-              href="/materials"
-              onClick={() => setIsSidebarOpen(false)}
-              className="flex items-center gap-3 rounded-lg px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-            >
-              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 text-xs font-semibold text-slate-500">
-                MO
-              </span>
-              <span>Materyal Onayı</span>
-            </a>
-            <a
-              href="#"
-              onClick={() => setIsSidebarOpen(false)}
-              className="flex items-center gap-3 rounded-lg px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-            >
-              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 text-xs font-semibold text-slate-500">
-                MŞ
-              </span>
-              <span>Müşteriler</span>
-            </a>
-            <a
-              href="#"
-              onClick={() => setIsSidebarOpen(false)}
-              className="flex items-center gap-3 rounded-lg px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-            >
-              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 text-xs font-semibold text-slate-500">
-                AY
-              </span>
-              <span>Ayarlar</span>
-            </a>
-          </nav>
-        </aside>
-
-        {/* Mobilde sidebar açıkken arka planda görünen yarı saydam karartma (overlay) alanı */}
-        {/* 
-          - Sadece küçük ekranlarda (lg altı) ve sidebar açıksa gösterilir.
-          - Kullanıcı bu karanlık alana tıkladığında menüyü kapatıyoruz.
-        */}
-        {isSidebarOpen && (
-          <div
-            className="fixed inset-0 z-30 bg-slate-900/40 lg:hidden"
-            onClick={() => setIsSidebarOpen(false)}
-          />
-        )}
+        {/* Merkezi Sidebar:
+            - next/link ile sayfa geçişleri
+            - aktif sayfa vurgusu
+            - RBAC (client rolünde bazı linkleri gizleme)
+            - mobil drawer + overlay kapanma davranışı */}
+        <Sidebar
+          role={currentProfile?.role ?? null}
+          isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
+        />
 
         {/* Sağ ana bölüm */}
         <div className="flex min-w-0 flex-1 flex-col">
@@ -374,191 +322,308 @@ export default function Home() {
 
           {/* İçerik */}
           <main className="flex-1 bg-slate-50 px-4 py-6 sm:px-6 lg:px-8">
-            <div className="space-y-8">
-              {/* İstatistik kartları */}
-              <section>
-                <h2 className="mb-4 text-sm font-medium uppercase tracking-[0.18em] text-slate-400">
-                  Genel Görünüm
-                </h2>
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  {/* Aktif Projeler */}
-                  <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-100">
-                    <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
-                      Aktif Projeler
-                    </p>
-                    <div className="mt-3 flex items-end justify-between">
-                      {/* Eğer Supabase'ten gelen proje sayısı henüz yüklenmediyse '...' gösteriyoruz */}
-                      <p className="text-3xl font-semibold text-slate-900">
-                        {projectsCount === null ? "..." : projectsCount}
+            {/* Eğer ajans için herhangi bir entegrasyon bağlı değilse */}
+            {!hasAnyIntegration ? (
+              <div className="flex h-full items-center justify-center">
+                <div className="max-w-md rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-8 text-center shadow-sm shadow-slate-100">
+                  {currentProfile?.role === "client" ? (
+                    <>
+                      <p className="text-sm font-semibold text-slate-900">
+                        Ajansınız henüz veri bağlantısı kurmadı
                       </p>
-                      <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">
-                        +2 bu hafta
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Bekleyen Onaylar */}
-                  <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-100">
-                    <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
-                      Bekleyen Onaylar
-                    </p>
-                    <div className="mt-3 flex items-end justify-between">
-                      {/* Eğer Supabase'ten gelen bekleyen onay sayısı henüz yüklenmediyse '...' gösteriyoruz */}
-                      <p className="text-3xl font-semibold text-slate-900">
-                        {pendingMaterialsCount === null
-                          ? "..."
-                          : pendingMaterialsCount}
+                      <p className="mt-2 text-xs text-slate-500">
+                        Reklam verileri ajansınız tarafından UMAY Hub&apos;a
+                        bağlandığında, kampanya performansınızı buradan
+                        görüntüleyebileceksiniz. Lütfen ajans temsilcinizle
+                        iletişime geçin.
                       </p>
-                      <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
-                        Öncelikli
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Tamamlanan İşler */}
-                  <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-100">
-                    <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
-                      Tamamlanan İşler
-                    </p>
-                    <div className="mt-3 flex items-end justify-between">
-                      <p className="text-3xl font-semibold text-slate-900">
-                        0
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-semibold text-slate-900">
+                        Henüz bir reklam hesabı bağlamadınız
                       </p>
-                      <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-medium text-slate-500">
-                        Son 30 gün
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Yeni Mesajlar */}
-                  <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-100">
-                    <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
-                      Yeni Mesajlar
-                    </p>
-                    <div className="mt-3 flex items-end justify-between">
-                      <p className="text-3xl font-semibold text-slate-900">
-                        0
+                      <p className="mt-2 text-xs text-slate-500">
+                        Dijital pazarlama verilerinizi görebilmek için Meta,
+                        Google Ads veya GA4 entegrasyonlarından en az birini
+                        bağlamanız gerekiyor.
                       </p>
-                      <span className="rounded-full bg-sky-50 px-2 py-1 text-xs font-medium text-sky-700">
-                        Müşteri kutusu
-                      </span>
-                    </div>
-                  </div>
+                      <button
+                        type="button"
+                        onClick={() => router.push("/integrations")}
+                        className="mt-4 inline-flex items-center rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-sky-700"
+                      >
+                        Entegrasyonlar Sayfasına Git
+                      </button>
+                    </>
+                  )}
                 </div>
-              </section>
+              </div>
+            ) : (
+              <div className="space-y-8">
+                {/* Üst kısım: Özet istatistik kartları */}
+                <section>
+                  <h2 className="mb-4 text-sm font-medium uppercase tracking-[0.18em] text-slate-400">
+                    Özet Performans
+                  </h2>
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    {/* Toplam Harcama */}
+                    <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-100">
+                      <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
+                        Toplam Harcama
+                      </p>
+                      <div className="mt-3 flex items-end justify-between">
+                        <p className="text-3xl font-semibold text-slate-900">
+                          12.450 TL
+                        </p>
+                        <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700">
+                          Son 7 gün
+                        </span>
+                      </div>
+                    </div>
 
-              {/* Son Aktiviteler */}
-              <section>
-                <div className="mb-4 flex items-center justify-between">
-                  <div>
-                    <h2 className="text-sm font-medium uppercase tracking-[0.18em] text-slate-400">
-                      Son Aktiviteler
+                    {/* Toplam Erişim */}
+                    <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-100">
+                      <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
+                        Toplam Erişim
+                      </p>
+                      <div className="mt-3 flex items-end justify-between">
+                        <p className="text-3xl font-semibold text-slate-900">
+                          85K
+                        </p>
+                        <span className="rounded-full bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700">
+                          Tüm kanallar
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Tıklama (Clicks) */}
+                    <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-100">
+                      <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
+                        Tıklama (Clicks)
+                      </p>
+                      <div className="mt-3 flex items-end justify-between">
+                        <p className="text-3xl font-semibold text-slate-900">
+                          1.200
+                        </p>
+                        <span className="rounded-full bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-600">
+                          Son 7 gün
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Ort. Tıklama Oranı (CTR) */}
+                    <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-100">
+                      <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
+                        Ort. Tıklama Oranı (CTR)
+                      </p>
+                      <div className="mt-3 flex items-end justify-between">
+                        <p className="text-3xl font-semibold text-slate-900">
+                          %1,4
+                        </p>
+                        <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">
+                          Hedef %2,0
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Orta kısım: Harcama Grafiği (Recharts ile) */}
+                <section className="grid gap-6 lg:grid-cols-3">
+                  <div className="lg:col-span-2 rounded-2xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-100">
+                    <div className="mb-4 flex items-center justify-between">
+                      <div>
+                        <h2 className="text-sm font-semibold text-slate-900">
+                          Harcama Grafiği (Son 7 Gün)
+                        </h2>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Bu grafik, son 7 gündeki günlük reklam harcama
+                          trendini sahte (mock) verilerle simüle eder.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Recharts ile çizilmiş basit bir çizgi grafik.
+                        NOT: Burası geçici simülasyon kodudur, gerçek Meta / Google verileri eklenecek. */}
+                    <div className="h-64">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart
+                          data={[
+                            { day: "Pzt", spend: 1500 },
+                            { day: "Sal", spend: 1800 },
+                            { day: "Çar", spend: 2100 },
+                            { day: "Per", spend: 1900 },
+                            { day: "Cum", spend: 2300 },
+                            { day: "Cmt", spend: 2200 },
+                            { day: "Paz", spend: 1650 },
+                          ]}
+                          margin={{ top: 10, right: 16, left: -8, bottom: 0 }}
+                        >
+                          <CartesianGrid
+                            strokeDasharray="3 3"
+                            stroke="#e5e7eb"
+                            vertical={false}
+                          />
+                          <XAxis
+                            dataKey="day"
+                            tickLine={false}
+                            axisLine={false}
+                            tick={{ fontSize: 11, fill: "#6b7280" }}
+                          />
+                          <YAxis
+                            tickLine={false}
+                            axisLine={false}
+                            tick={{ fontSize: 11, fill: "#6b7280" }}
+                            tickFormatter={(value) => `${value / 1000}K`}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              borderRadius: 8,
+                              borderColor: "#e5e7eb",
+                              fontSize: 12,
+                            }}
+                            formatter={(value) => {
+                              const num =
+                                typeof value === "number" ? value : Number(value ?? 0);
+                              return [
+                                `${num.toLocaleString("tr-TR")} TL`,
+                                "Harcama",
+                              ];
+                            }}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="spend"
+                            stroke="#0284c7"
+                            strokeWidth={2}
+                            dot={{ r: 3, strokeWidth: 1, stroke: "#0ea5e9" }}
+                            activeDot={{ r: 4 }}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Sağ tarafta özet bir kutu (örneğin son gün verisi) */}
+                  <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-100">
+                    <h2 className="text-sm font-semibold text-slate-900">
+                      Son Gün Özeti
                     </h2>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Ekibinizin ve müşterilerinizin son hareketlerini buradan
-                      takip edin.
+                    <p className="mt-1 text-xs text-slate-500">
+                      Dünkü harcama ve performans verilerinin kısa özeti.
                     </p>
+
+                    <div className="mt-4 space-y-3 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500">Harcama</span>
+                        <span className="font-semibold text-slate-900">
+                          2.300 TL
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500">Gösterim</span>
+                        <span className="font-semibold text-slate-900">
+                          14.200
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500">Tıklama</span>
+                        <span className="font-semibold text-slate-900">
+                          210
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500">
+                          Tıklama Oranı (CTR)
+                        </span>
+                        <span className="font-semibold text-slate-900">
+                          %1,48
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                </section>
 
-                <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm shadow-slate-100">
-                  <div className="hidden bg-slate-50/80 px-6 py-3 text-xs font-medium uppercase tracking-[0.16em] text-slate-500 sm:grid sm:grid-cols-12">
-                    <div className="col-span-5">Aktivite</div>
-                    <div className="col-span-3">Proje</div>
-                    <div className="col-span-2">Sorumlu</div>
-                    <div className="col-span-2 text-right">Zaman</div>
+                {/* Alt kısım: Aktif Kampanyalar listesi (mock verilerle) */}
+                <section>
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <h2 className="text-sm font-semibold text-slate-900">
+                        Aktif Kampanyalar
+                      </h2>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Ajansınızın şu anda yayında olan veya duraklatılmış
+                        örnek kampanyaları.
+                      </p>
+                    </div>
                   </div>
 
-                  <ul className="divide-y divide-slate-100">
-                    <li className="grid grid-cols-1 gap-2 px-4 py-4 text-sm sm:grid-cols-12 sm:items-center sm:px-6">
-                      <div className="col-span-5">
-                        {/* Supabase'ten gelen en son proje ismini burada gösteriyoruz.
-                            Eğer henüz veri yoksa, kullanıcıya bilgi vermek için basit bir metin yazıyoruz. */}
-                        <p className="font-medium text-slate-900">
-                          {latestProjectName
-                            ? `Yeni proje eklendi: ${latestProjectName}`
-                            : "Henüz eklenmiş bir proje bulunmuyor."}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Supabase veritabanındaki projeler tablosundan alınan
-                          son kayıt.
-                        </p>
-                      </div>
-                      <div className="col-span-3 text-slate-600">
-                        Projeler
-                      </div>
-                      <div className="col-span-2 text-slate-600">
-                        Sistem
-                      </div>
-                      <div className="col-span-2 text-right text-xs text-slate-500">
-                        Şimdi
-                      </div>
-                    </li>
+                  <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm shadow-slate-100">
+                    <div className="hidden bg-slate-50/80 px-6 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 sm:grid sm:grid-cols-12">
+                      <div className="col-span-5">Kampanya Adı</div>
+                      <div className="col-span-3">Bütçe</div>
+                      <div className="col-span-2">Durum</div>
+                      <div className="col-span-2 text-right">Kanal</div>
+                    </div>
 
-                    <li className="grid grid-cols-1 gap-2 px-4 py-4 text-sm sm:grid-cols-12 sm:items-center sm:px-6">
-                      <div className="col-span-5">
-                        <p className="font-medium text-slate-900">
-                          Yeni kampanya onaylandı
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Instagram performans kampanyası müşteri tarafından
-                          onaylandı.
-                        </p>
-                      </div>
-                      <div className="col-span-3 text-slate-600">
-                        Nova Dental Dijital Kampanya
-                      </div>
-                      <div className="col-span-2 text-slate-600">
-                        Murat A.
-                      </div>
-                      <div className="col-span-2 text-right text-xs text-slate-500">
-                        1 saat önce
-                      </div>
-                    </li>
-
-                    <li className="grid grid-cols-1 gap-2 px-4 py-4 text-sm sm:grid-cols-12 sm:items-center sm:px-6">
-                      <div className="col-span-5">
-                        <p className="font-medium text-slate-900">
-                          İçerik takvimi güncellendi
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Mayıs ayı sosyal medya içerikleri revize edildi.
-                        </p>
-                      </div>
-                      <div className="col-span-3 text-slate-600">
-                        Ayın İçerikleri - Global Food
-                      </div>
-                      <div className="col-span-2 text-slate-600">
-                        Duygu S.
-                      </div>
-                      <div className="col-span-2 text-right text-xs text-slate-500">
-                        Dün
-                      </div>
-                    </li>
-
-                    <li className="grid grid-cols-1 gap-2 px-4 py-4 text-sm sm:grid-cols-12 sm:items-center sm:px-6">
-                      <div className="col-span-5">
-                        <p className="font-medium text-slate-900">
-                          Rapor paylaşıldı
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Nisan performans raporu müşteri ile paylaşıldı.
-                        </p>
-                      </div>
-                      <div className="col-span-3 text-slate-600">
-                        Q2 Performans Raporu
-                      </div>
-                      <div className="col-span-2 text-slate-600">
-                        Berke T.
-                      </div>
-                      <div className="col-span-2 text-right text-xs text-slate-500">
-                        3 gün önce
-                      </div>
-                    </li>
-                  </ul>
-                </div>
-              </section>
-            </div>
+                    <ul className="divide-y divide-slate-100 text-sm">
+                      {[
+                        {
+                          name: "Vita Emlak - Lead Kampanyası",
+                          budget: "4.000 TL / ay",
+                          status: "Aktif",
+                          channel: "Meta",
+                        },
+                        {
+                          name: "Nova Dental - Marka Arama",
+                          budget: "3.500 TL / ay",
+                          status: "Aktif",
+                          channel: "Google Ads",
+                        },
+                        {
+                          name: "Global Food - Remarketing",
+                          budget: "2.000 TL / ay",
+                          status: "Duraklatıldı",
+                          channel: "Meta + Google",
+                        },
+                      ].map((c) => {
+                        const isActive = c.status === "Aktif";
+                        return (
+                          <li
+                            key={c.name}
+                            className="grid grid-cols-1 gap-2 px-4 py-4 sm:grid-cols-12 sm:items-center sm:px-6"
+                          >
+                            <div className="col-span-5">
+                              <p className="font-medium text-slate-900">
+                                {c.name}
+                              </p>
+                            </div>
+                            <div className="col-span-3 text-slate-600">
+                              {c.budget}
+                            </div>
+                            <div className="col-span-2">
+                              <span
+                                className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
+                                  isActive
+                                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                    : "border-slate-200 bg-slate-50 text-slate-600"
+                                }`}
+                              >
+                                {c.status}
+                              </span>
+                            </div>
+                            <div className="col-span-2 text-right text-xs text-slate-500">
+                              {c.channel}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                </section>
+              </div>
+            )}
           </main>
         </div>
       </div>
