@@ -41,6 +41,16 @@ type Project = {
   name: string;
 };
 
+// Supabase üzerindeki "profiles" tablosundaki kayıtların tipini TypeScript ile tanımlıyoruz.
+// Bu sayfada sadece role ve agency_id alanlarını kullanacağız, ancak tipte diğer alanları da
+// esnek bırakmak ileride genişletme yapmayı kolaylaştırır.
+type Profile = {
+  id: string;
+  email: string | null;
+  role: string | null;
+  agency_id: string | null;
+};
+
 // "Materyal Onay Merkezi" sayfasının ana bileşenini tanımlıyoruz.
 // Bu dosya app/materials/page.tsx olduğu için, Next.js bu bileşeni "/materials" rotasında gösterecektir.
 export default function MaterialsPage() {
@@ -72,11 +82,17 @@ export default function MaterialsPage() {
   // false: Menü kapalı, true: Menü açık (ekranın solundan kayan drawer olarak görünecek).
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // Geçici rol kontrolü için basit bir admin bayrağı oluşturuyoruz.
-  // Burada sadece belirli bir e-posta adresine (örneğin ajans yetkilisinin maili)
-  // sahip kullanıcıları "admin" olarak kabul ediyoruz.
-  // Diğer tüm kullanıcılar (müşteriler) bu koşula girmeyeceği için bazı alanları göremeyecek.
-  const isAdmin = userEmail === "testmail@gmail.com";
+  // Giriş yapan kullanıcının profil bilgisini (profiles tablosundan) saklamak için bir state.
+  // Burada özellikle role ve agency_id alanları bizim için önemli.
+  const [currentProfile, setCurrentProfile] = useState<Profile | null>(null);
+
+  // Profil bilgisi çekilirken kısa süreli bir yükleniyor durumu göstermek istersek kullanabileceğimiz state.
+  const [isProfileLoading, setIsProfileLoading] = useState(true);
+
+  // Kullanıcının ajans çalışanı olup olmadığını tutan basit bir bayrak (flag) state.
+  // - true: owner, manager veya başka bir ajans personeli (client dışı roller)
+  // - false: client rolü (müşteri) veya profil bulunamadı.
+  const [isAgencyStaff, setIsAgencyStaff] = useState(false);
 
   // Proje listesini (id ve name) saklamak için bir state tanımlıyoruz.
   // Bu veriyi Supabase'teki "projects" tablosundan çekeceğiz.
@@ -139,6 +155,62 @@ export default function MaterialsPage() {
     // Tanımladığımız oturum kontrol fonksiyonunu hemen çağırıyoruz.
     checkSession();
   }, [router]);
+
+  // SAYFA 1.5: GİRİŞ YAPAN KULLANICININ PROFİLİNİ ÇEKME
+  // Oturum kontrolü başarıyla geçildikten ve userEmail state'i dolduktan sonra,
+  // Supabase'deki "profiles" tablosundan, bu e-posta ile eşleşen profil kaydını çekiyoruz.
+  useEffect(() => {
+    // Eğer henüz oturum veya e-posta bilgisi yoksa profil sorgusuna başlamıyoruz.
+    if (!session || !userEmail) return;
+
+    const fetchCurrentProfile = async () => {
+      setIsProfileLoading(true);
+
+      try {
+        // profiles tablosundan e-posta adresine göre profil kaydını alıyoruz.
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("id, email, role, agency_id")
+          .eq("email", userEmail)
+          .single();
+
+        if (error) {
+          console.error(
+            "Profil bilgisi alınırken bir hata oluştu:",
+            error.message
+          );
+          // Hata durumunda profil bilgisini sıfırlayıp ajans çalışanı bayrağını false yapıyoruz.
+          setCurrentProfile(null);
+          setIsAgencyStaff(false);
+          return;
+        }
+
+        const profile = data as Profile;
+        setCurrentProfile(profile);
+
+        // Rol bazlı kontrol:
+        // Eğer kullanıcının rolü "client" DEĞİLSE (owner, manager, videographer vb. ise)
+        // isAgencyStaff true olur ve formu gösterebiliriz.
+        // Rolü "client" olan kullanıcıların ise sadece listeyi görmesini istiyoruz.
+        if (profile.role && profile.role !== "client") {
+          setIsAgencyStaff(true);
+        } else {
+          setIsAgencyStaff(false);
+        }
+      } catch (err) {
+        console.error(
+          "Profil bilgisi alınırken beklenmeyen bir hata oluştu:",
+          err
+        );
+        setCurrentProfile(null);
+        setIsAgencyStaff(false);
+      } finally {
+        setIsProfileLoading(false);
+      }
+    };
+
+    fetchCurrentProfile();
+  }, [session, userEmail]);
 
   // SAYFA 2: MATERYAL LİSTESİNİ SUPABASE'DEN ÇEKME
   // Oturum kontrolü başarıyla geçildikten sonra (session dolu olduğunda),
@@ -308,6 +380,10 @@ export default function MaterialsPage() {
         file_url: fileUrl,
         type: newMaterialType,
         status: "Onay Bekliyor",
+        // RBAC ve multi-tenant yapı için, materyalin hangi ajansa ait olduğunu
+        // materials tablosundaki agency_id sütununa yazıyoruz.
+        // currentProfile.agency_id değerini kullanarak, eklemeyi yapan kullanıcının ajansını işaretliyoruz.
+        agency_id: currentProfile?.agency_id ?? null,
       });
 
       // Eğer Supabase insert aşamasında bir hata döndürürse kullanıcıyı bilgilendiriyoruz.
@@ -398,7 +474,8 @@ export default function MaterialsPage() {
   };
 
   // Eğer oturum kontrolü hala devam ediyorsa, basit bir yükleniyor ekranı gösteriyoruz.
-  if (isCheckingSession) {
+  // Ayrıca profil bilgisi de yükleniyorsa, yine aynı bekleme ekranını gösterebiliriz.
+  if (isCheckingSession || isProfileLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-500">
         Oturum kontrol ediliyor...
@@ -591,10 +668,12 @@ export default function MaterialsPage() {
 
               {/* Yeni Materyal Ekle formu */}
               {/* 
-                - Bu formu sadece belirlediğimiz admin e-posta adresine sahip kullanıcılar görebilsin istiyoruz.
-                - isAdmin false olduğunda (müşteri rolü) bu kart tamamen gizlenecek.
+                - Bu formu sadece ajans çalışanları (owner, manager, videographer, graphic_designer vb.)
+                  görebilsin istiyoruz.
+                - Rolü "client" olan kullanıcılar (müşteriler) bu formu görmeyecek.
+                - Bu ayrımı isAgencyStaff bayrağı ile yönetiyoruz.
               */}
-              {isAdmin && (
+              {isAgencyStaff && (
                 <section>
                   <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-100">
                     <div className="mb-4">
