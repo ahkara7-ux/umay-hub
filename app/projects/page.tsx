@@ -200,9 +200,9 @@ export default function ProjectsPage() {
   // Oturum kontrolü başarıyla geçildikten sonra (session dolu olduğunda),
   // Supabase'deki "projects" tablosundan verileri çekiyoruz.
   useEffect(() => {
-    // Eğer henüz oturum bilgisi yoksa (örneğin kontrol devam ediyorsa),
+    // Eğer henüz oturum veya profil/ajans bilgisi yoksa (örneğin kontrol devam ediyorsa),
     // verileri çekmeye başlamıyoruz.
-    if (!session) return;
+    if (!session || !currentProfile?.agency_id) return;
 
     // Asenkron veri çekme fonksiyonumuzu tanımlıyoruz.
     const fetchProjects = async () => {
@@ -215,6 +215,7 @@ export default function ProjectsPage() {
         const { data, error } = await supabase
           .from("projects")
           .select("*")
+          .eq("agency_id", currentProfile.agency_id)
           .order("created_at", { ascending: false });
 
         // Eğer Supabase bir hata döndürdüyse, bunu konsola yazıyoruz.
@@ -247,10 +248,12 @@ export default function ProjectsPage() {
   // Proje listesini yenilemek (örneğin yeni bir proje oluşturulduktan sonra)
   // en güncel veriyi getirmek için kullanacağımız yardımcı fonksiyon.
   const refreshProjects = async () => {
+    if (!currentProfile?.agency_id) return;
     try {
       const { data, error } = await supabase
         .from("projects")
         .select("*")
+        .eq("agency_id", currentProfile.agency_id)
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -290,6 +293,19 @@ export default function ProjectsPage() {
   // Bu fonksiyon, formdaki "Projeyi Başlat" butonuna basıldığında çalışır.
   // Formdan aldığı değerlerle Supabase'teki "projects" tablosuna yeni bir kayıt ekler.
   const handleCreateProject = async () => {
+    // Önce profil ve ajans bilgimizin gerçekten yüklendiğinden emin oluyoruz.
+    // Eğer currentProfile veya agency_id yoksa, RLS kuralları nedeniyle insert işlemi hata verebilir.
+    if (!currentProfile || !currentProfile.agency_id) {
+      alert(
+        "Ajans bilginiz bulunamadı. Lütfen sayfayı yenileyip tekrar deneyin veya sistem yöneticinize haber verin."
+      );
+      console.error(
+        "PROJE EKLEME HATASI: currentProfile veya agency_id eksik:",
+        currentProfile
+      );
+      return;
+    }
+
     // Önce basit bir doğrulama yapıyoruz: Zorunlu alanlar doldurulmuş mu?
     if (!newProjectName || !newClientName || !newClientEmail) {
       alert(
@@ -308,6 +324,17 @@ export default function ProjectsPage() {
     setIsCreatingProject(true);
 
     try {
+      // Formdaki metin değerlerini kırpıyoruz (boşlukları temizliyoruz).
+      const trimmedProjectName = newProjectName.trim();
+      const trimmedClientName = newClientName.trim();
+      const trimmedClientEmail = newClientEmail.trim();
+
+      // Eğer ileride "Müşteri Seçimi" gibi opsiyonel alanlar eklenirse ve boş bırakılırsa,
+      // Supabase'e boş string yerine null göndererek olası NOT NULL hatalarının önüne geçiyoruz.
+      const safeClientName = trimmedClientName === "" ? null : trimmedClientName;
+      const safeClientEmail =
+        trimmedClientEmail === "" ? null : trimmedClientEmail;
+
       // Supabase üzerindeki "projects" tablosuna yeni bir satır ekliyoruz.
       // Burada:
       // - name: Proje adı
@@ -316,20 +343,17 @@ export default function ProjectsPage() {
       // - status: Varsayılan olarak "Aktif" durumu ile başlatıyoruz (ihtiyaca göre değiştirilebilir).
       // - agency_id: Giriş yapan ajans çalışanının agency_id değeri (projenin hangi ajansa ait olduğunu belirtmek için)
       const { error } = await supabase.from("projects").insert({
-        name: newProjectName,
-        client_name: newClientName,
-        client_email: newClientEmail,
+        name: trimmedProjectName,
+        client_name: safeClientName,
+        client_email: safeClientEmail,
         status: "Aktif",
-        agency_id: currentProfile?.agency_id ?? null,
+        agency_id: currentProfile.agency_id,
       });
 
       // Eğer Supabase bir hata döndürdüyse, kullanıcıya basit bir uyarı gösteriyoruz
       // ve hatayı konsola yazıyoruz.
       if (error) {
-        console.error(
-          "Yeni proje eklenirken bir hata oluştu:",
-          error.message
-        );
+        console.error("PROJE EKLEME HATASI:", error);
         alert(
           "Proje eklenirken bir hata oluştu. Lütfen tekrar deneyin veya sistem yöneticinize haber verin."
         );
@@ -345,7 +369,7 @@ export default function ProjectsPage() {
       await refreshProjects();
     } catch (err) {
       console.error(
-        "Yeni proje eklenirken beklenmeyen bir hata oluştu:",
+        "PROJE EKLEME HATASI (beklenmeyen):",
         err
       );
       alert(

@@ -316,11 +316,10 @@ export default function TasksPage() {
         agency_id: currentProfile.agency_id,
       });
 
+      // Mevcut hata bloğunu isteğin doğrultusunda güncelliyoruz:
       if (error) {
-        console.error("Görev oluşturulurken bir hata oluştu:", error.message);
-        alert(
-          "Görev oluşturulurken bir hata oluştu. Lütfen daha sonra tekrar deneyin."
-        );
+        console.error("DETAYLI VERİTABANI HATASI:", error); // Bu satır altın değerinde!
+        alert(`Hata Detayı: ${error.message} - ${error.details}`);
         return;
       }
 
