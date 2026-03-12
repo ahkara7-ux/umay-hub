@@ -124,6 +124,13 @@ export function Sidebar({ role, isOpen, onClose }: SidebarProps) {
       showForClient: false,
     },
     {
+      key: "reports",
+      label: "Raporlar",
+      href: "/reports",
+      iconText: "RP",
+      showForClient: false,
+    },
+    {
       key: "settings",
       label: "Ayarlar",
       href: "/settings",
