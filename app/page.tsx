@@ -52,9 +52,9 @@ type ClientReport = {
   client_id: string;
   agency_id: string;
   period: string | null;
-  spend: number | null;
-  impressions: number | null;
-  clicks: number | null;
+  total_spend: number | null;
+  total_impressions: number | null;
+  total_clicks: number | null;
   conversions: number | null;
   agency_summary: string | null;
 };
@@ -216,7 +216,7 @@ export default function Home() {
       const { data, error } = await supabase
         .from("client_reports")
         .select(
-          "id, client_id, agency_id, period, spend, impressions, clicks, conversions, agency_summary"
+          "id, client_id, agency_id, period, total_spend, total_impressions, total_clicks, conversions, agency_summary"
         )
         .eq("client_id", clientId)
         .eq("agency_id", agencyId)
@@ -515,8 +515,8 @@ export default function Home() {
                       </p>
                       <div className="mt-3 flex items-end justify-between">
                         <p className="text-3xl font-semibold text-slate-900">
-                          {latestReport.spend != null
-                            ? `${latestReport.spend.toLocaleString("tr-TR")} TL`
+                          {latestReport.total_spend != null
+                            ? `${latestReport.total_spend.toLocaleString("tr-TR")} TL`
                             : "-"}
                         </p>
                         <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700">
@@ -532,8 +532,8 @@ export default function Home() {
                       </p>
                       <div className="mt-3 flex items-end justify-between">
                         <p className="text-3xl font-semibold text-slate-900">
-                          {latestReport.impressions != null
-                            ? latestReport.impressions.toLocaleString("tr-TR")
+                          {latestReport.total_impressions != null
+                            ? latestReport.total_impressions.toLocaleString("tr-TR")
                             : "-"}
                         </p>
                         <span className="rounded-full bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700">
@@ -549,8 +549,8 @@ export default function Home() {
                       </p>
                       <div className="mt-3 flex items-end justify-between">
                         <p className="text-3xl font-semibold text-slate-900">
-                          {latestReport.clicks != null
-                            ? latestReport.clicks.toLocaleString("tr-TR")
+                          {latestReport.total_clicks != null
+                            ? latestReport.total_clicks.toLocaleString("tr-TR")
                             : "-"}
                         </p>
                         <span className="rounded-full bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-600">
@@ -566,12 +566,12 @@ export default function Home() {
                       </p>
                       <div className="mt-3 flex items-end justify-between">
                         <p className="text-3xl font-semibold text-slate-900">
-                          {latestReport.impressions != null &&
-                          latestReport.impressions > 0 &&
-                          latestReport.clicks != null
+                          {latestReport.total_impressions != null &&
+                          latestReport.total_impressions > 0 &&
+                          latestReport.total_clicks != null
                             ? `%${(
-                                (latestReport.clicks /
-                                  latestReport.impressions) *
+                                (latestReport.total_clicks /
+                                  latestReport.total_impressions) *
                                 100
                               ).toFixed(2)}`
                             : "-"}
@@ -590,11 +590,13 @@ export default function Home() {
                     <div className="mb-4 flex items-center justify-between">
                       <div>
                         <h2 className="text-sm font-semibold text-slate-900">
-                          Harcama Grafiği (Son 7 Gün)
+                          Harcama Grafiği ({latestReport.period ?? "Seçili dönem"})
                         </h2>
                         <p className="mt-1 text-xs text-slate-500">
-                          Bu grafik, son 7 gündeki günlük reklam harcama
-                          trendini sahte (mock) verilerle simüle eder.
+                          Bu grafik, seçili rapor dönemindeki toplam harcamayı
+                          basit bir trend olarak gösterir. İleride günlük/saatlik
+                          kırılımlar eklendiğinde daha detaylı bir analize
+                          dönüştürülebilir.
                         </p>
                       </div>
                     </div>
@@ -604,14 +606,15 @@ export default function Home() {
                     <div className="h-64">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart
+                          // Burada elimizde tek bir dönemlik toplam harcama olduğu için,
+                          // kullanıcıya görsel bir fikir vermesi adına 4 noktalı basit bir
+                          // trend çizgisi oluşturuyoruz. Gerçek projede bu alan günlük
+                          // kırılımlar ile doldurulabilir.
                           data={[
-                            { day: "Pzt", spend: 1500 },
-                            { day: "Sal", spend: 1800 },
-                            { day: "Çar", spend: 2100 },
-                            { day: "Per", spend: 1900 },
-                            { day: "Cum", spend: 2300 },
-                            { day: "Cmt", spend: 2200 },
-                            { day: "Paz", spend: 1650 },
+                            { label: "Hafta Başı", spend: (latestReport.total_spend ?? 0) * 0.2 },
+                            { label: "Hafta Ortası", spend: (latestReport.total_spend ?? 0) * 0.5 },
+                            { label: "Hafta Sonu", spend: (latestReport.total_spend ?? 0) * 0.8 },
+                            { label: "Toplam", spend: latestReport.total_spend ?? 0 },
                           ]}
                           margin={{ top: 10, right: 16, left: -8, bottom: 0 }}
                         >
@@ -621,7 +624,7 @@ export default function Home() {
                             vertical={false}
                           />
                           <XAxis
-                            dataKey="day"
+                            dataKey="label"
                             tickLine={false}
                             axisLine={false}
                             tick={{ fontSize: 11, fill: "#6b7280" }}

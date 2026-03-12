@@ -40,11 +40,11 @@ interface ClientReport {
   client_id: string;
   agency_id: string;
   period: string | null;
-  spend: number | null;
-  impressions: number | null;
-  clicks: number | null;
+  total_spend: number | null;
+  total_impressions: number | null;
+  total_clicks: number | null;
   conversions: number | null;
-  strategy_note: string | null;
+  agency_summary: string | null;
 }
 
 export default function ReportsPage() {
@@ -226,7 +226,7 @@ export default function ReportsPage() {
       const { data, error } = await supabase
         .from("client_reports")
         .select(
-          "id, client_id, agency_id, period, spend, impressions, clicks, conversions, strategy_note"
+          "id, client_id, agency_id, period, total_spend, total_impressions, total_clicks, conversions, agency_summary"
         )
         .eq("agency_id", currentProfile.agency_id)
         .order("created_at", { ascending: false });
@@ -283,11 +283,12 @@ export default function ReportsPage() {
       const periodLabel = `${periodMonth} ${periodYear}`;
 
       // Sayısal alanları number'a çeviriyoruz. Boşsa null gönderiyoruz.
-      const spendValue =
+      const totalSpendValue =
         spendTl.trim() === "" ? null : Number(spendTl.replace(",", "."));
-      const impressionsValue =
+      const totalImpressionsValue =
         impressions.trim() === "" ? null : Number(impressions);
-      const clicksValue = clicks.trim() === "" ? null : Number(clicks);
+      const totalClicksValue =
+        clicks.trim() === "" ? null : Number(clicks);
       const conversionsValue =
         conversions.trim() === "" ? null : Number(conversions);
 
@@ -295,11 +296,11 @@ export default function ReportsPage() {
         client_id: selectedClientId,
         agency_id: currentProfile.agency_id,
         period: periodLabel,
-        spend: spendValue,
-        impressions: impressionsValue,
-        clicks: clicksValue,
+        total_spend: totalSpendValue,
+        total_impressions: totalImpressionsValue,
+        total_clicks: totalClicksValue,
         conversions: conversionsValue,
-        strategy_note: strategyNote || null,
+        agency_summary: strategyNote || null,
       });
 
       if (error) {
